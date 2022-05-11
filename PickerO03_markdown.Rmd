@@ -1,0 +1,288 @@
+---
+title: "Picker O03 Protected & No protected RNAseq analysis"
+author: "Monica L. Rojas-Pena"
+output:
+  pdf_document: default
+  html_document: default
+---
+This is the data analysis performed for data from project PickerO03 (postchallenge), including Non-protected samples. 127 samples incluing protected and non-protected.
+
+#1.Read tables and raw data visualization
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+library(MASS)
+library(rrcov)
+
+if (!require("edgeR")) {
+  install.packages("edgeR", repos="http://cran.rstudio.com/") 
+  library("edgeR")
+}
+
+
+if (!require("limma")) {
+  install.packages("limma", repos="http://cran.rstudio.com/") 
+  library("limma")
+}
+
+setwd("Z:/Users/mlrp/Projects/O03_Picker/PickerO03_")
+
+CountsMatrix = read.csv("count_rawmatrix_O03Picker.csv", row.names = 1, header=T)
+dim(CountsMatrix)
+
+TargetFile = read.csv("Target_O03Picker.csv", header=T)
+dim(TargetFile)
+
+##Raw data visualization
+
+boxplot(log2(CountsMatrix+1), col = TargetFile$StudyWeekandOutcome, ylab = "log2 Expression", main = "Raw count_matrix", cex.axis=.5, las=2)
+
+plotDensities(log2(CountsMatrix+1), legend = "topright",levels(TargetFile$StudyWeekandOutcome))
+
+```
+
+##1.1 Counting samples
+We summarize what animals in each group.
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="S",]); x[order(x[,1]),]
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="O",]); x[order(x[,1]),]
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="X",]); x[order(x[,1]),]
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="Y",]); x[order(x[,1]),]
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="E",]); x[order(x[,1]),]
+x = unique(TargetFile[,c("Treatment_Group","Challenge_outcome","Study_Week")][TargetFile[,"Group"]=="N",]); x[order(x[,1]),]
+
+
+```
+
+## 1.2. Cutoff comparison
+We check the between-sample correlation to see internal correlation structure at different cutoffs. These steps use complete linkage clustering, with pearson or spearman correlation.
+
+```{r Dendrograms of between sample correlation, echo=F}
+par(mfrow=c(2,2))
+A100 = unname(CountsMatrix[apply(FUN=max, X=CountsMatrix, MARGIN=1)>100,])
+dim(A100)
+hc = hclust(as.dist(1-cor(A100, method="pearson")))
+plot(hc, main="Pearson corr, cutoff 100")
+hc = hclust(as.dist(1-cor(A100, method="spearman")))
+plot(hc, main="Spearman corr, cutoff 100")
+A50 = unname(CountsMatrix[apply(FUN=max, X=CountsMatrix, MARGIN=1)>50,])
+dim(A50)
+hc = hclust(as.dist(1-cor(A50, method="pearson")))
+plot(hc, main="Pearson corr, cutoff 300")
+hc = hclust(as.dist(1-cor(A50, method="spearman")))
+plot(hc, main="Spearman corr, cutoff 300")
+par(mfrow=c(1,1))
+
+# As noted above the expressioncutoffs were determined by removing genes that are not expressed in any sample. If we use a cutoff of 100, we get over 12.5k expressed genes (11258) and with a cutoff of 50, we get over 12k.
+
+```
+
+
+
+#2. Gene filtering Normalization
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+# Calculate normalization factors to scale the raw library sizes.
+##1. We filter out genes with low counts
+CM2 <- DGEList(counts = CountsMatrix)
+
+CM2 = CM2[apply(FUN=max, X=CM2, MARGIN=1)>100,]
+dim(CM2)
+
+
+# Biological coefficients of variation
+CM2.1 <- estimateCommonDisp(CM2,verbose=T) #print the BCV value
+CM2.1 <- estimateTrendedDisp(CM2.1)
+CM2.1 <- estimateTagwiseDisp(CM2.1)
+dim(CM2.1)
+
+plotBCV(CM2.1, cex=0.4, main="Biological coefficient of variation (BCV) vs abundance")
+
+CM2 <- calcNormFactors(CM2) #default normalization method is TMM (not needed if voom quantile Normalization)
+
+```
+
+#2.1 Using voom
+##When the library sizes are quite variable between samples, then the voom approach is theoretically more powerful than lidesigna-trend.
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+ti = factor(TargetFile$SW_G,levels=unique(TargetFile$SW_G))
+Xid = factor(TargetFile$Treatment_GroupB)
+#batch = factor(TargetFile$Library_Prep_Date)
+
+#design = model.matrix(~0+ti+Xid+batch)
+design = model.matrix(~0+ti+Xid)#Adjusting for animalID (group animalID = Xid)  automatically adjusts also for gender, age and any other personal characteristics. The features of interest in this comparison are Timepoint, and Protection outcome.
+colnames(design)
+
+design = design[,colSums(design)>0 & !colnames(design)%in%nonEstimable(design)]
+
+
+V_CM2 <- voom(counts=CM2, design=design, plot=TRUE)
+
+#write.csv(V_CM2$E, file="count_normmatrix_O03Picker.csv")
+
+```
+
+#2.2 Visualization of normalization
+##PCA labels correspond to Animal ID and Study Week
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+boxplot(V_CM2$E, col = cols[TargetFile$StudyWeekandOutcome], ylab = "log2 Expression", main = "Normalized_after_voom", cex.axis=.5, las=2)
+
+cols = c('black', 'red', 'green', 'blue', 'cyan', 'magenta', 'yellow3')
+plotDensities(V_CM2$E, col = cols, legend = "topright",levels(TargetFile$StudyWeekandOutcome))
+
+plotMDS(V_CM2$E, col = cols[TargetFile$StudyWeekandOutcome], labels = TargetFile$StudyWeekandOutcome, cex= .8)
+legend("bottomleft", legend = c("BL_NoProt", "PID28_No_Prot","PID28_Prot","PID56_NoProt","PID56_Prot", "W85_NoProt","W85_Prot"), col = c('black', 'red', 'green', 'blue', 'cyan', 'magenta', 'yellow3'), pch = 19, cex = .6)
+
+plotMDS(V_CM2$E, col = cols[TargetFile$Library_Prep_Date], labels = TargetFile$StudyWeekandOutcome, cex= .8)
+legend("bottomleft", legend = c("11/1/2017_38", "10/25/2017_47","9/12/2017_12","9/5/2017_2","7/20/2017_15", "7/5/2017_13"), col = c('black', 'red', 'green', 'blue', 'cyan', 'magenta'), pch = 19, cex = .6)
+```
+
+#Principal Componen analysis of variation (PVCA)
+```{r, message=FALSE, echo=FALSE, tidy.opts=list(width.cutoff=60)}
+
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+#BiocManager::install("ExpressionNormalizationWorkflow")
+
+
+library(ExpressionNormalizationWorkflow)
+library(Biobase)
+
+exprs <- read.table("count_normmatrix_O03Picker.csv", header=TRUE, sep=",",row.names=1, as.is=TRUE)
+covrts <- read.table("Targer_O03Picker.csv", header=TRUE, sep=",", row.names=1, as.is=TRUE)
+
+inpData <- expSetobj(exprs, covrts)
+cvrts_eff_var <- c("Study_Week", "AnimalID", "Challenge_outcome", "Library_Prep_Date","RIN") ## Set the covariates whose effect size on the data needs to be calculated
+pct_thrsh <- 0.75
+
+pvcAnaly(inpData, pct_thrsh, cvrts_eff_var)
+
+```
+
+# Hierarchical clustering (Ward.D method) and Color by Study week
+```{r echo=FALSE,  message=FALSE, fig.height=16, fig.width=8, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+#With specific lables
+
+labs = TargetFile$Library
+h <- t(V_CM2$E)
+rownames(h)<-labs #set new row names
+hc <- hclust(dist(h),  method = "ward.D")
+hc <- as.dendrogram(hc)
+
+hc %>% set("labels_colors", as.numeric(TargetFile$Library_Prep_Date), order_value = TRUE) %>% # change color
+set("labels_cex", 0.5) %>% # Change size
+plot(main = "", horiz = TRUE) # plot
+legend("topleft",  legend = levels(TargetFile$Library_Prep_Date), fill = c('black', 'red','green','blue', 'cyan', 'magenta'))#legend setup)
+
+
+library(dendextend)
+h <- t(V_CM2$E)
+hc = hclust(dist(h), method = "ward.D")
+hc <- as.dendrogram(hc)
+hc %>% set("labels_colors", as.numeric(TargetFile$StudyWeekandOutcome), order_value = TRUE) %>% # change color
+set("labels_cex", 0.5) %>% # Change size
+plot(main = "", horiz = TRUE) # plot
+
+legend("topleft",  legend = levels(TargetFile$StudyWeekandOutcome), fill = c('black', 'red','green','blue', 'cyan', 'magenta', 'yellow3'))#legend setup
+
+```
+
+#3. Perform differential expression
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60)}
+
+contrast.matrix = c(PID28vsW85groupX_PROT = "tiPID28_X-tiW85_X",
+                    PID56vsW85groupX_PROT = "tiPID56_X-tiW85_X",
+                    PID28vsW85groupS_PROT = "tiPID28_S-tiW85_S",
+                    PID56vsW85groupS_PROT = "tiPID56_S-tiW85_S",
+                    PID28vsW85groupO_PROT = "tiPID28_O-tiW85_O",
+                    PID56vsW85groupO_PROT = "tiPID56_O-tiW85_O",
+                    PID28vsW85groupN_NonPROT = "tiPID28_N-tiW85_N",
+                    PID56vsW85groupN_NonPROT = "tiPID56_N-tiW85_N",
+                    PID28vsBLgroupY_CLT = "tiPID28_Y-tiBL_Y",
+                    PID56vsBLgroupY_CLT = "tiPID56_Y-tiBL_Y")
+
+contrast.matrix = c(PID28vsW85groupS_PROT = "tiPID28_S-tiW85_S",
+                    PID56vsW85groupS_PROT = "tiPID56_S-tiW85_S",
+                    PID28vsW85groupO_PROT = "tiPID28_O-tiW85_O",
+                    PID56vsW85groupO_PROT = "tiPID56_O-tiW85_O",
+                    PID28vsW85groupN_NonPROT = "tiPID28_N-tiW85_N",
+                    PID56vsW85groupN_NonPROT = "tiPID56_N-tiW85_N",
+                    PID28vsBLgroupY_CLT = "tiPID28_Y-tiBL_Y",
+                    PID56vsBLgroupY_CLT = "tiPID56_Y-tiBL_Y")
+
+
+contr = makeContrasts(contrasts=contrast.matrix, levels=design) 
+
+VCM.lmfit = lmFit(V_CM2, design=design)
+VCM.contrasts = contrasts.fit(VCM.lmfit, contr)
+VCM.eBayes = eBayes(VCM.contrasts)
+
+results <- decideTests(VCM.eBayes , lfc=(.58), method="separate", adjust.method="BH", p.value=0.05);
+
+summary(results)
+
+write.csv(summary(results), file="resultsummary_O03Picker.csv")
+
+write.fit(VCM.contrasts, file="O03Picker_DE_analysis.txt", digits=3, method="separate", adjust="BH");
+```
+#3.1 Differentially express genes summary
+```{r, tidy=TRUE, tidy.opts=list(width.cutoff=60), echo=FALSE, include=TRUE}
+
+# Reshape data frame for ggplot2 requirements
+library(data.table)
+library(ggplot2)
+
+results_t <- t(summary(results))
+results_t <- results_t[,-2]
+
+for (i in 1:(length(row.names(results_t)))) {
+  results_t[i, 1] <- results_t[i, 1] * -1
+}
+
+DE <- as.data.frame(results_t)
+DE <- setnames(DE, old=c("Var1","Var2", "Freq"), new=c("Time_Point", "group", "DE_genes"))
+
+#write.csv(DE , file="barplot_O03Picker.csv",row.names=FALSE)
+
+#Create plot
+
+ggplot(DE, aes(x=Time_Point, y=DE_genes, fill=group, label = DE$DE_genes))+  geom_bar(stat="identity", position="identity")+
+geom_text(size = 3, position = position_stack(vjust = 0.5) )+
+scale_fill_manual(values = c("#9d9dff", "#ff4d4d")) +
+ylab("Number of Differentially Expressed Genes") +
+theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+```
+
+#3.2. Golbal Heatmap of the common differentiall expressed genes
+```{r, echo=FALSE, message = FALSE, fig.width=11, fig.height=8}
+
+##Heatmap
+dataMatrix <- VCM.eBayes$coefficients # Extract results of differential expression
+
+sigMask <- dataMatrix * (results**2) # 1 if significant, 0 otherwise
+
+ExpressMatrix <- subset(dataMatrix, rowSums(sigMask) != 0) # filter for significant genes
+
+# Filter sigMask to use for selecting DE genes from ExpressMatrix
+sigMask <- subset(sigMask, rowSums(sigMask) != 0)
+
+dim(sigMask)
+
+length(sigMask)
+
+write.csv(ExpressMatrix, file="ExpressMatrix_global_O03Picker.csv")
+
+source("Z:/Users/mlrp/Projects/heatmap.F.R")
+
+global_modules <- heatmap.F.4(ExpressMatrix, cutoff = 3, distmethod = "euclidean", clustermethod = "ward.D", clusterdim='row')
+
+write.csv(global_modules, file = "global_modules_O03Picker.csv")
+
+sessionInfo()
+
+```
+
+

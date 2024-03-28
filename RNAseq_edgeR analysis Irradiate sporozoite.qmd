@@ -1,0 +1,489 @@
+---
+title: "Irradiate Sporozoite - EdgeR/Limma"
+Author: Monica L. Rojas-Pena
+format: html
+editor: visual
+---
+
+# **Rojas-Peña et al. 2018 Profiling gene expression of the host response to a *Plasmodium vivax* irradiated sporozoite immunization and infectious challenge**
+
+## Summary
+
+Here we describe whole peripheral blood gene expression profiling to contrast the contributions of the immune response to vaccine-induced and natural protection against *Plasmodium vivax-* mediated malaria. RNA-seq data analysis was performed to pre- and post-vaccination samples from 19 volunteer participants in a clinical trial investigating the efficacy of an irradiated sporozoite vaccine.
+
+The samples sequenced in this experiment were from a randomized, single-blinded trial. Duffy positive (Fy+; Pv susceptible) individuals were enrolled: 14 received bites from irradiated (150 ± 10 cGy) Pv-infected Anopheles mosquitoes (RAS) and 7 from non-irradiated non-infected mosquitoes (Ctl) from Cali, Colombia, with a total of seven immunizations were carried out at mean intervals of nine weeks. Study is described in Arévalo-Herrera et al. (2016).
+
+RNA-seq analysis was performed for 20 individuals (5 Duffy Fy(-) and 15 Duffy Fy(+) from Cali, Colombia) 3 Control, 5 Duffy Fy(-) and 12 *Plasmodium vivax* irradiate sporozoite (PvRAS) immunized for three of the time points, namely baseline (20 samples); pre-challenge (19 Samples) and diagnosis day (19 samples); 58 samples were sequenced.
+
+![Figure1. The three time points represented by the green symbols: Baseline (20 samples), Prechallenge (19 Samples) and day of Diagnosis (19 samples). Controls, Fy- and Fy+ Vaccinated individuals are represented by yellow, green and blue silhouettes of representative genders on the left, and red shading on the right indicates which individuals were diagnosed with malaria. One woman (red/blue) was positive for infection but asymptomatic.](Figure1.jpg)
+
+## Data analysis
+
+The quality of raw RNAseq reads in Fastq files was evaluated using FastQC software.After quality control 55 RNAseq single end samples were used for subsequent analysis with an overall alignment rate of 93%. Samples were aligned to the human genome (hg19/GRCh37 assembly with the UCSC reference annotation) using Tophat2 (Trapnell et al. 2012). Transcript abundance was estimated at the level of the whole gene as counts per million-mapped-reads ( cpm) values using HTSeq (Anders et al. 2015).
+
+Questions to answer in the analysis:
+
+i\) Does exposure to irradiate sporozoite generate a difference in gene expression between baseline versus pre-challenge, pre-challenge vs diagnosis, and baseline versus diagnosis?
+
+iI) Do protected and susceptible (no-protected) profiles in those who received Irradiated Sporozoite differ at diagnosis differ? and if so, what pathways are involved?
+
+iiI) Do naturally (Duffy) and vaccine-protected individuals share the same profiles or are there significant differences?
+
+iv\) Are Duffy negative individuals distinguishable from Duffy positive at baseline?
+
+Lets start with the analysis:
+
+```{r}
+#| echo: false
+
+#Install packages from CRAN
+install.packages('pacman')
+pacman::p_load(ggtern, scales, tidyverse)
+
+#load all packages at once
+pck = c('ggtern','scales','tidyverse')
+lapply(pck, library, character.only=TRUE)
+
+# install and load the package BiocManager package to be able to access Bioconductor packages
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.18")
+
+# install and load bioconductor packages 
+BiocManager::install(c('edgeR', 'limma', 'ExpressionNormalizationWorkflow', 'Biobase'))
+
+#load all bioconductor packages at once
+bioc_pck = c('edgeR', 'limma', 'ExpressionNormalizationWorkflow', 'Biobase')
+lapply(bioc_pck, library, character.only=TRUE)
+
+```
+
+### **Reading in the data**
+
+```{r}
+#| label: Input-data
+#| echo: false
+#| tidy=TRUE, 
+#| tidy.opts=list(width.cutoff=80)
+
+
+setwd("~/Documents/MyPublications/Irradiate sporozoite")
+
+#Read the data
+rawdata <- read.csv("rawdata_irrspz.csv", header = TRUE, row.names = 1, stringsAsFactors = T)
+dim(rawdata)
+
+head(rawdata)
+
+metadata <- read.csv("metadata_irrspz.csv", header = TRUE, stringsAsFactors = T)
+dim(metadata)
+head(metadata)
+
+```
+
+Raw data contains 55 samples and 26428 genes distributed in three time points as follows:
+
+```{r}
+#| echo: false
+
+metadata %>%
+  group_by(Group, Timepoint) %>%
+  summarize(Samples = n_distinct(Volunteer_ID))
+
+
+```
+
+### **Ancestry proportions of the study participants**
+
+Ancestry proportions of the study participants were inferred using ADMIXTURE (Alexander et al. 2009)with k=3 populations, based on common genotypes called with the GATK HaplotypeCaller in all three samples of an individual (McKenna et al. 2010), merged with the vcfmerge utility in VCF Tools (Danecek et al. 2011), and matched to the 1000 Genomes Project (Auton et al. 2015) variants with PLINK (Purcell et al. 2007). Red, blue, and olive colored circles at the corners of the triangle are representative samples from the 1000 Genomes Project and green circles are study participants. These tend to have higher African ancestry than the Medellin Colombians from the 1000 Genomes Project represented by the purple circles. The five outliers with greater than 40% African ancestry close to the left hand edge of the triangle in @fig-triangle_etnicity are the Fy negative individuals.
+
+```{r}
+#| echo: false
+#| label: fig-triangle_etnicity
+#| out-width: "50%"
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 2. Ancestry proportions of the study participants"
+
+#install.packages("devtools")
+#require(devtools)
+#install_version("ggplot2", version = "3.4.4", repos = "http://cran.us.r-project.org")
+#library(ggplot2)
+
+#Ethnicity results
+ethnicity_irrspz <- read.table("Ethnicity_irrspz.txt", header=T)
+
+ggtern(data=ethnicity_irrspz,aes(African,European,Native_American,colour,
+                           colour=factor(Org))) + 
+  geom_point(aes(fill = Org),size=3, shape = 21, color = "black") + 
+  theme_rgbw() + 
+  custom_percent("%") +
+  labs(colour="Org") + 
+  theme(legend.position =c(0,1),
+        legend.justification=c(0,1))
+
+#Builded in with ggplot 3.4.4
+#Error in guides_train(scales = scales$non_position_scales(), theme = theme,  : 
+#could not find function "guides_train" due to update with ggplot 3.5.0
+```
+
+The three axes indicate the proportion of ancestry in each individual inferred to derive from African (left), European (right) or Amerindian (East Asian: baseline) ancestry. Ancestry proportions were inferred using ADMIXTURE (Alexander et al. 2009) with k=3 populations, based on common genotypes called with the GATK HaplotypeCaller in all three samples of an individual (McKenna et al. 2010), merged with the vcf-merge utility in VCF Tools (Danecek et al. 2011), and matched to the 1000 Genomes Project (Auton et al. 2015) variants with PLINK (Purcell et al. 2007). Red, blue, and olive colored circles at the corners of the triangle are representative samples from the 1000 Genomes Project and green circles are study participants, who tend to have higher African ancestry than the Medellin Colombians from the 1000 Genomes Project represented by the purple circles, particularly the 5 outliers with greater than 40% African ancestry, who are Duffy negative.
+
+### **Data exploration and quality assessment**
+
+#### **Data pre-processing (Filtering and normalization)**
+
+```{r}
+#| label: Filtering
+#| echo: False
+#| label: fig-desities
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 3"
+
+# For easy manipulation, the data is put into a DGEList edgeR object
+# readDGE if samples are stored in separate files. The files have to be read separately and collated together. Files need to contain two columns, one for the counts and one for a gene identifier.
+
+rawdata_dge <- DGEList(counts = rawdata, group = metadata$Group_Timepoint)
+
+# Filtering out genes that are lowly expressed
+# The filterByExpr function keeps rows that have worthwhile counts in a minumum number of samples. The function accesses the group factor contained in the data (rawdata_dge) in order to compute the minimum group size, but the filtering is performed independently of which sample belongs to which group so that no bias is introduced.Removing low count genes allows the mean-variance relationship in the data to be estimated with greater reliability and also reduces the number of statistical tests that need to be carried out in downstream analyses looking at differential expression.
+
+keep <- filterByExpr(rawdata_dge, group = metadata$Group_Timepoint)
+rawdata_keep <- rawdata_dge[keep, , keep.lib.sizes=FALSE]
+dim(rawdata_keep)
+
+#Plotting the distribution log-CPM values shows that a sizeable proportion of genes within each sample are either unexpressed or lowly-expressed with log-CPM values that are small or negative
+
+cpm <- cpm(rawdata_dge)
+lcpm <- cpm(rawdata_dge, log=TRUE)
+summary(lcpm)
+
+L <- mean(rawdata_dge$samples$lib.size) * 1e-6
+M <- median(rawdata_dge$samples$lib.size) * 1e-6
+c(L, M)
+
+legend <- unique(metadata$Group_Timepoint)
+
+lcpm.cutoff <- log2(10/M + 2/L)
+library(RColorBrewer)
+nsamples <- ncol(rawdata_dge)
+col <- brewer.pal(nsamples, "Paired")
+par(mfrow=c(1,2))
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="A. Raw data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+  den <- density(lcpm[,i])
+  lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", legend= legend, text.col=col, bty="n")
+lcpm <- cpm(rawdata_keep, log=TRUE)
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="B. Filtered data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+  den <- density(lcpm[,i])
+  lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", legend = legend, text.col=col, bty="n")
+```
+
+@fig-desities The density of log-CPM values for raw pre-filtered data (**A**) and post-filtered data (**B**) are shown for each sample. Dotted vertical lines mark the log-CPM threshold (equivalent to a CPM value of about 0.1) used in the filtering step (legend labels= R:RAS, C:Control, D:Duffy, B:Baseline, PC: Pre-challenge, D:Diagnosis ).
+
+After filtering the final RNA-seq data set includes Baseline, Pre-challenge and Diagnosis day time points of 55 RNA-seq single end 100bp samples with a total of 15,095 genes. We can see that the peak corresponding to low-expressed genes is successfully largely reduced in the data after filtering.
+
+#### Normalizing the gene expression distributions
+
+```{r}
+#| label: Normalization
+#| echo: False
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 4. Boxplots of log-CPM values showing expression distributions for unnormalised data ( A) and normalised data ( B) for each sample in the modified dataset where the counts in samples 1 and 2 have been scaled to 5% and 500% of their original values respectively."
+#|   - "Figure 5. MD plots"
+
+# Calculate normalization factors - normalizes the library sizes by finding a set of scaling factors for the library sizes that minimizes the log-fold changes between the samples for most genes. In edgeR, normalization takes the form of correction factors that enter into the statistical model.
+
+data_norm <- normLibSizes(rawdata_keep) #default normalization method is TMM 
+data_norm$samples$norm.factors
+
+#The set of all normalization factors for a DGEList multiply to unity, ensuring that the geomet- ric mean of the effective library sizes is the same as the geometric mean of the original library sizes. A normalization factor below one indicates that a small number of high count genes are monopolizing the sequencing, causing the counts for other genes to be lower than would be usual given the library size.
+
+# We convert values to cpm(log2) and save the normalized matrix
+normalized <- cpm(data_norm,normalized.lib.size=T, log=TRUE)
+write.csv((normalized),'normalized_IrrSpz55.csv',quote=F,append=F,row.names=T,sep='\t')
+
+#To give a better visual representation of the effects of normalisation, the data was duplicated then adjusted so that the counts of the first sample are reduced to 5% of their original values, and in the second sample they are inflated to be 5-times larger.
+
+dx <- data_norm
+dx$samples$norm.factors <- 1
+dx$counts[,1] <- ceiling(dx$counts[,1]*0.05)
+dx$counts[,2] <- dx$counts[,2]*5
+
+
+par(mfrow=c(1,2))
+lcpm <- cpm(dx, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="", cex.axis=.5)
+title(main="A. Unnormalised data", ylab="Log-cpm")
+dx <- normLibSizes(dx)
+dx$samples$norm.factors
+lcpm <- cpm(dx, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="",cex.axis=.5)
+title(main="B. Normalised data", ylab="Log-cpm")
+
+#Ideally, the bulk of genes should be centred at a log-fold change of zero. This indicates that any composition bias between libraries has been successfully removed. This quality check should be repeated by constructing a MD plot for each sample.
+plotMD(cpm(data_norm, log=TRUE), column=1)
+abline(h=0, col="red", lty=2, lwd=2)
+plotMD(cpm(data_norm, log=TRUE), column=2)
+abline(h=0, col="red", lty=2, lwd=2)
+```
+
+Figure 4 above, shows the expression distribution of samples for unnormalized and normalized data, where distributions are noticeably different pre-normalization and are similar post-normalization.
+
+### Unsupervised clustering of samples
+
+One of the most important exploratory plots for gene expression is the multi-dimensional scaling (MDS) plot.
+
+```{r}
+#| label: MDS
+#| echo: False
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 6." 
+
+#MDS arranges the points on the plot so that the distances among each pair of points correlates as best as possible to the dissimilarity between those two samples. The values on the two axes tell you nothing about the variables for a given sample - the plot is just a two dimensional space to arrange the points. You can think of this in a similar way to how you would read a PCA plot in bulk RNASeq as it allows us to visualize the structure of the data. The aim is to check whether samples separate by our known factors of interest. Strong separation foreshadows a large number of DEGs in the subsequent analysis.
+
+lcpm <- cpm(data_norm, log=TRUE)
+par(mfrow=c(1,2))
+col.group <- metadata$Timepoint
+levels(col.group) <-  brewer.pal(nlevels(col.group), "Set1")
+col.group <- as.character(col.group)
+col.ID <- metadata$Timepoint
+levels(col.ID) <-  brewer.pal(nlevels(col.ID), "Set1")
+col.ID <- as.character(col.ID)
+plotMDS(lcpm, labels=metadata$Sample_ID, col=col.group, cex = 0.5)
+title(main="A. Sample timepoints")
+plotMDS(lcpm, labels=metadata$GroupID, col=col.ID, dim=c(3,4), cex = 0.5)
+title(main="B. Sample groups")
+
+
+```
+
+Figure 6. MDS plots of log-CPM values over dimensions 1 and 2 with samples coloured by timepoint and labeled by sample group_timepoint (**A**) and over dimensions 3 and 4 with samples coloured by volunteer ID and labeled by group (**B**). Distances on the plot correspond to the leading fold-change, which is the average (root-mean-square) log~2~-fold-change for the 500 genes most divergent between each pair of samples by default.
+
+#### Principal Component analysis of variation (PVCA)
+
+```{r}
+#| echo: false
+#| message=FALSE 
+#| tidy.opts=list(width.cutoff=60)
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 7.  Principal Component analysis of variation of the gene expression"
+
+## read in the files (counts matrix and covariates table)
+exprs <- read.table("normalized_IrrSpz55.csv", header=TRUE, sep=",",row.names=1, as.is=TRUE)
+covrts <- read.csv("metadata_irrspz.csv", header=TRUE, sep=",", row.names=1, as.is=TRUE)
+
+inpData <- expSetobj(exprs, covrts)
+
+#Library prep day add to metadata
+
+cvrts_eff_var <- c("Volunteer_ID", "Timepoint", "Group","Challenge_outcome","RIN") ## Set the covariates whose effect size on the data needs to be calculated
+pct_thrsh <- 0.75
+
+
+pvcAnaly(inpData, pct_thrsh, cvrts_eff_var)
+
+```
+
+Figure 7 shows the weighted average of the variance captured by the first five principal components that is explained by Volunteer_ID , Timepoint, Group, Challenge_outcome and RIN, indicating that most of the variance is among the individuals.
+
+```{r}
+#| label: MDS_removing_individual_variation
+#| echo: False
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 8." 
+#Removing invidual variation, by removing indivudual variatio, timepoint separate nicely between groups.
+
+grtp <- factor(metadata$Group_Timepoint)
+
+logCPM2 <- cpm(data_norm, log=TRUE)
+par(mfrow=c(1,2))
+design.Status <- model.matrix(~grtp)
+logCPM2.corrected <- removeBatchEffect(logCPM2, batch=metadata$Volunteer_ID, design=design.Status)
+plotMDS(logCPM2.corrected, label=metadata$Sample_ID,col=col.group, cex = 0.5)
+title(main="A. Sample timepoint corrected")
+plotMDS(logCPM2.corrected, labels=metadata$GroupID, col=col.ID, dim=c(3,4), cex = 0.5)
+title(main="B. Sample groups corrected")
+```
+
+```{r}
+#| fig-align: center
+#| fig-cap: 
+#|   - "Figure 8.  Scatterplot of the biological coefficient of variation (BCV) against the average abundance of each gene."
+
+# Biological coefficients of variation
+## BCV measures the variation between the biological replicates (i.e., samples within the groups). The group information is taken into account when estimating the BCV. Reliable estimation of BCV is crucial for realistic assessment of differential expression in RNA-Seq experiments.
+
+# Model matrix design
+ind <- factor(metadata$Volunteer_ID)
+grtp <- factor(metadata$Group_Timepoint)
+data.frame(Sample=colnames(data_norm),grtp)
+
+#Mixed effects model, such that group (Duffy, Control and RAS) and timepoint (Baseline, PreChallenge and Diagnosis) are included into the design matrix as fixed effects in the model, whilst volunteer IDs are included as random effects.
+
+#Why do we fit volunteer IDs as a random effect rather than a fixed effect? The specific differences between volunteers are not of direct interest to the study, so removing them from the design matrix reduces the number of model parameters, conserves the number of degrees of freedom in modelling, and likely increases statistical power for testing.
+
+design <- model.matrix(~0+grtp)
+design
+colnames(design) <- gsub("grtp", "", colnames(design))
+design
+
+data_v <- voom(counts=data_norm,design=design, plot=TRUE)
+corfit <- duplicateCorrelation(data_v, design, block=ind)
+corfit$consensus
+
+#The volunteer correlation will change the voom weights slightly, so we run voom a second time:
+data_v2 <- voom(data_norm, design, plot = TRUE, block = ind, correlation = corfit$consensus)
+
+#we run update the correlation for the new voom weights
+cor2 <- duplicateCorrelation(data_v2, design, block = ind)
+cor2$consensus
+
+#The correlation has hardly changed on the second iteration.
+```
+
+The within-volunteer correlation (0.18) is small but positive.
+
+The vertical axis of the plotBCV plot shows square-root dispersion, also known as biological coefficient of variation (BCV). Trended and common BCV estimates are shown in blue and red, respectively. Expression values vary up and down by \~40% between samples, typically observed in RNA-Seq studies with human subjects (McCarthy et al. 2012).
+
+#### Differential expression analysis
+
+Deferential expression was assessed using the linear modeling framework for RNAseq data in edgeR.
+
+We carry out linear modeling with factors for challenge outcome, timepoint and group interactions between all three. I block out individual.
+
+The idea is to organize the linear model in the following way: 1. We compare data from each timepoint to their baseline values. 2. We determine the genes that respond differently to treatment in the specific treatment groups. 3. At each treatment group, we try to identify genes that respond differently to treatment in the protected individuals, compared to unprotected and Duffy individuals.
+
+```{r}
+#| echo: false
+#| message=FALSE
+
+v_fit <- lmFit(object=data_v2, design=design, block=ind, correlation=corfit$consensus)
+
+# Contrasts matrix
+my.contrasts <- makeContrasts(
+  Ctrl.BSLvsPreCh = C.PC-C.B,
+  Ctrl.BSLvsDGS = C.D-C.B,
+  Ctrl.PreChvsDGS = C.D-C.PC,
+  CtrBeforevsDGS = C.D-(C.B+C.PC)/2,
+  RAS.BSLvsPreCh = R.PC-R.B,
+  RAS.BSLvsDGS = R.D-R.B,
+  RAS.PreChvsDGS = R.D-R.PC,
+  Duffy.BSLvsPreCh = D.PC-D.B,
+  Duffy.BSLvsDGS = D.D-D.B,
+  Duffy.PreChvsDGS = D.D-D.PC,
+  DuffyBeforevsDGS = D.D-(D.B+D.PC)/2,
+  levels = colnames(design))
+
+my.contrasts
+
+data_fit <- contrasts.fit(v_fit, my.contrasts)
+
+#Examining the number of DE genes: Significance is defined using an adjusted p-value cutoff that is set at 5% by default. 
+
+data_de <- eBayes(data_fit)
+plotSA(data_de)
+
+#Cutoff/filtering: Although decideTests function enables users to set p-value and logFC cutoffs simultaneously, this combination criterion is not recommended. logFC cutoffs tend to favor low expressed genes and thereby reduce rather than increase biological significance.
+results <- decideTests(data_de, lfc=(.58),method="separate", adjust.method="BH", p.value=0.05);
+summary(results)
+
+write.fit(data_de, file="DEresults_IrradiateSporozoite.txt", digits=3, method="separate", adjust="BH");
+
+t <- treat(data_de,lfc=0.1)
+
+plotMD(data_de, column=6, status=results[,6], main=colnames(data_de)[6], xlim=c(-8,13))
+plotMD(data_de, column=7, status=results[,7], main=colnames(data_de)[7], xlim=c(-8,13))
+```
+
+Gene expression profiling of whole blood reveals the type and duration of the immune response to *P. vivax* infection, and highlights a subset of genes that may mediate adaptive immunity.
+
+```{r}
+#| echo: false
+#| message=FALSE
+
+dataMatrix <- data_de$coefficients # Extract results of differential expression
+
+sigMask <- dataMatrix * (results**2) # 1 if significant, 0 otherwise
+
+ExpressMatrix <- subset(dataMatrix, rowSums(sigMask) != 0) # filter for significant genes
+
+# Filter sigMask to use for selecting DE genes from ExpressMatrix
+sigMask <- subset(sigMask, rowSums(sigMask) != 0)
+
+dim(sigMask)
+
+length(sigMask)
+
+source("~/Documents/MyPublications/Irradiate sporozoite/heatmap.F.R")
+global_modules <- heatmap.F.4(ExpressMatrix, cutoff = 3, distmethod = "euclidean", clustermethod = "ward.D", clusterdim='row')
+
+write.csv(global_modules, file = "global_modules_IrrSpz.csv")
+
+
+de_names <- row.names(ExpressMatrix)
+matrix_names <- row.names(lcpm)
+i <- which(de_names %in% matrix_names)
+mycol <- colorpanel(1000,"blue","white","red")
+heatmap.2(lcpm[i,], scale="row",
+   labRow=, labCol= metadata$Sample_ID, cexCol = .25,
+   col=mycol, trace="none", density.info="none", 
+   margin=c(8,6), lhei=c(2,10), dendrogram="column")
+
+
+```
+
+```{r}
+#| echo: false
+#| message=FALSE
+
+#Top Go
+go <- goana(data_de, geneid= row.names(data_de$coefficients), trend=TRUE)
+topGO(results, ontology = c("BP", "CC", "MF"), sort = NULL, number = 20L,
+          truncate.term = NULL, p.value = 1)
+
+topKEGG(results, sort = NULL, number = 20L, truncate.path = NULL, p.value = 1)
+
+# Fold-change thresholding
+data_fit2 <- treat(data_de,lfc=0.1)
+topTreat(data_fit2,coef=6)
+
+# Volcano plot
+volcanoplot(data_de,coef="RAS.BSLvsDGS", names=row.names(data_de), main="RAS Baseline Vs Diagnosis", pch = 1, cex = 0.45) 
+lp <- -log10(data_de$p.value[,"RAS.BSLvsDGS"])
+ord <- order(lp, decreasing = TRUE)[1:3000]
+points(data_de$coef[ord,"RAS.BSLvsDGS"], lp[ord], pch = 1, cex = 0.65, col = "red")
+ord2 <- order(lp, decreasing = TRUE)[1:10]
+x <- data_de$coef[ord2,"RAS.BSLvsDGS"]
+y <- lp[ord2]
+text(x, y, row.names(data_de)[ord2], cex=0.8, col="black")
+
+# Mean-difference plot
+plotMD(data_de,column=6)
+
+# Q-Q plot of moderated t-statistics
+qqt(data_de$t[,2],df=data_de$df.residual+data_de$df.prior)
+abline(0,1)
+
+
+```
+
+This analysis was conducted on:
+
+```{r}
+sessionInfo()
+```
